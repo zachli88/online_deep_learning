@@ -75,7 +75,7 @@ class MLPClassifier(nn.Module):
         """
         super().__init__()
 
-        raise NotImplementedError("MLPClassifier.__init__() is not implemented")
+        self.mlp = nn.Sequential(nn.Linear(3*h*w, 128), nn.ReLU(), nn.Linear(128, num_classes))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -85,7 +85,7 @@ class MLPClassifier(nn.Module):
         Returns:
             tensor (b, num_classes) logits
         """
-        raise NotImplementedError("MLPClassifier.forward() is not implemented")
+        return self.mlp(x)
 
 
 class MLPClassifierDeep(nn.Module):
