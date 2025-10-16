@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.utils.tensorboard as tb
+import torch.optim as optim
 
 from .models import ClassificationLoss, load_model, save_model
 from .utils import load_data
@@ -24,7 +25,7 @@ def train(
     else:
         print("CUDA not available, using CPU")
         device = torch.device("cpu")
-
+    lr = .01
     # set random seed so each run is deterministic
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -44,7 +45,7 @@ def train(
     # create loss function and optimizer
     loss_func = ClassificationLoss()
     # optimizer = ...
-
+    optimizer = optim.SGD(model.parameters(), lr=lr)
     global_step = 0
 
     # training loop
@@ -55,22 +56,34 @@ def train(
             img, label = img.to(device), label.to(device)
 
             # TODO: implement training step
-            raise NotImplementedError("Training step not implemented")
+            logits = model.forward(img)
+            loss = loss_func(logits, label)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
+            preds = logits.argmax(dim=1)
+            metrics["train_acc"].append((preds == label).sum().item() / label.size(0))
+            
             global_step += 1
 
+        # torch.inference_mode calls model.eval() and disables gradient computation
         with torch.inference_mode():
             for img, label in val_data:
                 img, label = img.to(device), label.to(device)
 
                 # TODO: compute validation accuracy
-                raise NotImplementedError("Validation accuracy not implemented")
+                logits = model.forward(img)
+                preds = logits.argmax(dim=1)
+                metrics["val_acc"].append((preds == label).sum().item() / label.size(0))
+                
 
         # log average train and val accuracy to tensorboard
         epoch_train_acc = torch.as_tensor(metrics["train_acc"]).mean()
         epoch_val_acc = torch.as_tensor(metrics["val_acc"]).mean()
 
-        raise NotImplementedError("Logging not implemented")
+        logger.add_scalar("train_accuracy", epoch_train_acc, global_step)
+        logger.add_scalar("val_accuracy", epoch_val_acc, global_step)
 
         # print on first, last, every 10th epoch
         if epoch == 0 or epoch == num_epoch - 1 or (epoch + 1) % 10 == 0:
