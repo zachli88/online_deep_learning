@@ -54,7 +54,16 @@ class TransformerBlock(nn.Module):
         """
         super().__init__()
 
-        raise NotImplementedError("TransformerBlock.__init__() is not implemented")
+        self.norm1 = nn.LayerNorm(embed_dim)
+        self.attn = nn.MultiheadAttention(embed_dim, num_heads, dropout=dropout, batch_first=True)
+        self.norm2 = nn.LayerNorm(embed_dim)
+
+        hidden_dim = int(embed_dim * mlp_ratio)
+        self.mlp = nn.Sequential(
+            nn.Linear(embed_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, embed_dim),
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -64,7 +73,10 @@ class TransformerBlock(nn.Module):
         Returns:
             (batch_size, sequence_length, embed_dim) output sequence
         """
-        raise NotImplementedError("TransformerBlock.forward() is not implemented")
+        attn_out, _ = self.attn(self.norm1(x), self.norm1(x), self.norm1(x))
+        x = x + attn_out
+        x = x + self.mlp(self.norm2(x))
+        return x
 
 
 class PatchEmbedding(nn.Module):
@@ -130,7 +142,30 @@ class MLPClassifierDeepResidual(nn.Module):
         """
         super().__init__()
 
-        raise NotImplementedError("MLPClassifierDeepResidual.__init__() is not implemented")
+        input_dim = 3 * h * w
+        hidden_dim = 256
+        num_layers = 4
+        
+        self.input_layer = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU()
+        )
+
+        self.blocks = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, hidden_dim)
+            )
+            for _ in range(num_layers)
+        ])
+
+        self.output_layer = nn.Linear(hidden_dim, num_classes)
+
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                nn.init.zeros_(m.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -140,7 +175,17 @@ class MLPClassifierDeepResidual(nn.Module):
         Returns:
             tensor (b, num_classes) logits
         """
-        raise NotImplementedError("MLPClassifierDeepResidual.forward() is not implemented")
+        x = x.view(x.size(0), -1)
+        out = self.input_layer(x)
+
+        for block in self.blocks:
+            residual = out
+            out = block(out)
+            out = out + residual
+            out = nn.functional.relu(out)
+
+        logits = self.output_layer(out)
+        return logits
 
 
 class ViTClassifier(nn.Module):
@@ -168,7 +213,34 @@ class ViTClassifier(nn.Module):
         """
         super().__init__()
 
-        raise NotImplementedError("ViTClassifier.__init__() is not implemented")
+        patch_size = 8
+        embed_dim = 128
+        num_layers = 2
+        num_heads = 4
+        mlp_ratio = 4.0
+
+        self.patch_size = patch_size
+        self.embed_dim = embed_dim
+        self.num_patches = (h // patch_size) * (w // patch_size)
+
+        self.linear_proj = nn.Linear(3 * patch_size * patch_size, embed_dim)
+
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+
+        self.pos_embed = nn.Parameter(torch.zeros(1, self.num_patches + 1, embed_dim))
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+
+        self.blocks = nn.ModuleList([
+            TransformerBlock(embed_dim, num_heads, mlp_ratio)
+            for _ in range(num_layers)
+        ])
+
+        self.norm = nn.LayerNorm(embed_dim)
+        self.fc = nn.Linear(embed_dim, num_classes)
+
+        nn.init.trunc_normal_(self.cls_token, std=0.02)
+        nn.init.trunc_normal_(self.fc.weight, std=0.02)
+        nn.init.zeros_(self.fc.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -178,7 +250,25 @@ class ViTClassifier(nn.Module):
         Returns:
             tensor (b, num_classes) logits
         """
-        raise NotImplementedError("ViTClassifier.forward() is not implemented")
+        B, C, H, W = x.shape
+        p = self.patch_size
+
+        patches = x.unfold(2, p, p).unfold(3, p, p)
+        patches = patches.contiguous().view(B, C, -1, p, p)
+        patches = patches.permute(0, 2, 1, 3, 4).flatten(2)
+
+        x = self.linear_proj(patches)
+
+        cls_token = self.cls_token.expand(B, -1, -1)
+        x = torch.cat((cls_token, x), dim=1)
+
+        x = x + self.pos_embed
+        for block in self.blocks:
+            x = block(x)
+
+        cls_output = self.norm(x[:, 0])
+        logits = self.fc(cls_output)
+        return logits
 
 
 model_factory = {
