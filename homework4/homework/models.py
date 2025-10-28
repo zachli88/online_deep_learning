@@ -24,6 +24,25 @@ class MLPPlanner(nn.Module):
         self.n_track = n_track
         self.n_waypoints = n_waypoints
 
+        hidden_dim = 128
+        num_layers = 4
+        input_dim = n_track * 2 * 2
+        output_dim = n_waypoints * 2
+
+        layers = []
+        dim = input_dim
+        for _ in range(num_layers):
+            layers += [nn.Linear(dim, hidden_dim), nn.ReLU()]
+            dim = hidden_dim
+        layers += [nn.Linear(hidden_dim, output_dim)]
+
+        self.mlp = nn.Sequential(*layers)
+
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                nn.init.zeros_(m.bias)
+
     def forward(
         self,
         track_left: torch.Tensor,
@@ -43,7 +62,8 @@ class MLPPlanner(nn.Module):
         Returns:
             torch.Tensor: future waypoints with shape (b, n_waypoints, 2)
         """
-        raise NotImplementedError
+        x = torch.cat([track_left, track_right], dim=2).reshape(track_left.shape[0], -1)
+        return self.mlp(x).view(track_left.shape[0], self.n_waypoints, 2)
 
 
 class TransformerPlanner(nn.Module):
@@ -60,6 +80,26 @@ class TransformerPlanner(nn.Module):
 
         self.query_embed = nn.Embedding(n_waypoints, d_model)
 
+        nhead = 4
+        num_layers = 2,
+        dim_feedforward = 128
+        self.input_proj = nn.Linear(2, d_model)
+
+        self.query_embed = nn.Embedding(n_waypoints, d_model)
+
+        decoder_layer = nn.TransformerDecoderLayer(
+            d_model=d_model, nhead=nhead,
+            dim_feedforward=dim_feedforward, batch_first=True
+        )
+        self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
+
+        self.output_fc = nn.Linear(d_model, 2)
+
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                nn.init.zeros_(m.bias)
+
     def forward(
         self,
         track_left: torch.Tensor,
@@ -79,7 +119,12 @@ class TransformerPlanner(nn.Module):
         Returns:
             torch.Tensor: future waypoints with shape (b, n_waypoints, 2)
         """
-        raise NotImplementedError
+        boundary = torch.cat([track_left, track_right], dim=1)
+        memory = self.input_proj(boundary)
+        queries = self.query_embed.weight.unsqueeze(0).expand(track_left.size(0), -1, -1)
+        decoded = self.decoder(tgt=queries, memory=memory)
+
+        return self.output_fc(decoded)  
 
 
 class PatchEmbedding(nn.Module):
@@ -150,7 +195,11 @@ class TransformerBlock(nn.Module):
         """
         super().__init__()
 
-        raise NotImplementedError("TransformerBlock.__init__() is not implemented")
+        self.norm1 = nn.LayerNorm(embed_dim)
+        self.attn = nn.MultiheadAttention(embed_dim, num_heads, dropout=dropout, batch_first=True)
+        self.norm2 = nn.LayerNorm(embed_dim)
+        hidden_dim = int(embed_dim * mlp_ratio)
+        self.mlp = nn.Sequential(nn.Linear(embed_dim, hidden_dim), nn.GELU(), nn.Linear(hidden_dim, embed_dim))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -160,13 +209,21 @@ class TransformerBlock(nn.Module):
         Returns:
             (batch_size, sequence_length, embed_dim) output sequence
         """
-        raise NotImplementedError("TransformerBlock.forward() is not implemented")
+        attn_out, _ = self.attn(self.norm1(x), self.norm1(x), self.norm1(x))
+        x = x + attn_out
+        return x + self.mlp(self.norm2(x))
 
 
 class ViTPlanner(torch.nn.Module):
     def __init__(
         self,
         n_waypoints: int = 3,
+        h: int = 96,
+        w: int = 128,
+        patch_size: int = 8,
+        embed_dim: int = 64,
+        num_layers: int = 4,
+        num_heads: int = 4,
     ):
         """
         Vision Transformer (ViT) based planner that predicts waypoints from images.
@@ -202,7 +259,16 @@ class ViTPlanner(torch.nn.Module):
         self.register_buffer("input_mean", torch.as_tensor(INPUT_MEAN), persistent=False)
         self.register_buffer("input_std", torch.as_tensor(INPUT_STD), persistent=False)
 
-        raise NotImplementedError("ViTPlanner.__init__() is not implemented")
+        self.patch_embed = PatchEmbedding(h=h, w=w, patch_size=patch_size, in_channels=3, embed_dim=embed_dim)
+        num_patches = self.patch_embed.num_patches
+        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
+        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+        self.blocks = nn.ModuleList([TransformerBlock(embed_dim=embed_dim, num_heads=num_heads, mlp_ratio=4.0) for _ in range(num_layers)])
+        self.norm = nn.LayerNorm(embed_dim)
+        self.fc = nn.Linear(embed_dim, n_waypoints * 2)
+
+        nn.init.trunc_normal_(self.fc.weight, std=0.02)
+        nn.init.zeros_(self.fc.bias)
 
     def forward(self, image: torch.Tensor, **kwargs) -> torch.Tensor:
         """
@@ -222,8 +288,12 @@ class ViTPlanner(torch.nn.Module):
         """
         x = image
         x = (x - self.input_mean[None, :, None, None]) / self.input_std[None, :, None, None]
-
-        raise NotImplementedError("ViTPlanner.forward() is not implemented")
+        x = self.patch_embed(x)
+        x = x + self.pos_embed
+        for blk in self.blocks:
+            x = blk(x)
+        x = self.norm(x).mean(dim=1)
+        return = self.fc(x).view(x.size(0), self.n_waypoints, 2)
 
 
 MODEL_FACTORY = {
