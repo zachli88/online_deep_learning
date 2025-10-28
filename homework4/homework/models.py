@@ -293,7 +293,7 @@ class ViTPlanner(torch.nn.Module):
         for blk in self.blocks:
             x = blk(x)
         x = self.norm(x).mean(dim=1)
-        return = self.fc(x).view(x.size(0), self.n_waypoints, 2)
+        return self.fc(x).view(x.size(0), self.n_waypoints, 2)
 
 
 MODEL_FACTORY = {
