@@ -9,7 +9,7 @@ INPUT_STD = [0.2064, 0.1944, 0.2252]
 import torch
 import torch.nn as nn
 
-
+# File was written with the help of ChatGPT
 class MLPPlanner(nn.Module):
     def __init__(
         self,
