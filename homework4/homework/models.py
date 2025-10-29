@@ -81,7 +81,7 @@ class TransformerPlanner(nn.Module):
         self.query_embed = nn.Embedding(n_waypoints, d_model)
 
         nhead = 4
-        num_layers = 2,
+        num_layers = 2
         dim_feedforward = 128
         self.input_proj = nn.Linear(2, d_model)
 
