@@ -93,54 +93,113 @@ class PatchAutoEncoderBase(abc.ABC):
         """
 
 
-class PatchAutoEncoder(torch.nn.Module, PatchAutoEncoderBase):
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class PatchAutoEncoder(nn.Module):
     """
-    Implement a PatchLevel AutoEncoder
-
-    Hint: Convolutions work well enough, no need to use a transformer unless you really want.
-    Hint: See PatchifyLinear and UnpatchifyLinear for how to use convolutions with the input and
-          output dimensions given.
-    Hint: You can get away with 3 layers or less.
-    Hint: Many architectures work here (even a just PatchifyLinear / UnpatchifyLinear).
-          However, later parts of the assignment require both non-linearities (i.e. GeLU) and
-          interactions (i.e. convolutions) between patches.
+    Patch-level AutoEncoder implementation.
+    Splits an image into patches, encodes each patch into a latent vector,
+    and reconstructs the full image from these encoded features.
     """
 
-    class PatchEncoder(torch.nn.Module):
+    class PatchEncoder(nn.Module):
         """
-        (Optionally) Use this class to implement an encoder.
-                     It can make later parts of the homework easier (reusable components).
+        Encoder that maps input patches to latent representations.
         """
-
         def __init__(self, patch_size: int, latent_dim: int, bottleneck: int):
             super().__init__()
-            raise NotImplementedError()
+            self.encoder = nn.Sequential(
+                nn.Conv2d(3, bottleneck, kernel_size=3, stride=1, padding=1),
+                nn.GELU(),
+                nn.Conv2d(bottleneck, bottleneck, kernel_size=3, stride=1, padding=1),
+                nn.GELU(),
+                nn.Conv2d(bottleneck, latent_dim, kernel_size=3, stride=1, padding=1)
+            )
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:
-            raise NotImplementedError()
+            return self.encoder(x)
 
-    class PatchDecoder(torch.nn.Module):
+    class PatchDecoder(nn.Module):
+        """
+        Decoder that reconstructs image patches from latent features.
+        """
         def __init__(self, patch_size: int, latent_dim: int, bottleneck: int):
             super().__init__()
-            raise NotImplementedError()
+            self.decoder = nn.Sequential(
+                nn.Conv2d(latent_dim, bottleneck, kernel_size=3, stride=1, padding=1),
+                nn.GELU(),
+                nn.Conv2d(bottleneck, bottleneck, kernel_size=3, stride=1, padding=1),
+                nn.GELU(),
+                nn.Conv2d(bottleneck, 3, kernel_size=3, stride=1, padding=1)
+            )
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:
-            raise NotImplementedError()
+            return self.decoder(x)
 
     def __init__(self, patch_size: int = 25, latent_dim: int = 128, bottleneck: int = 128):
         super().__init__()
-        raise NotImplementedError()
+        self.patch_size = patch_size
+        self.latent_dim = latent_dim
+        self.encoder = self.PatchEncoder(patch_size, latent_dim, bottleneck)
+        self.decoder = self.PatchDecoder(patch_size, latent_dim, bottleneck)
+
+    def patchify(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Converts an image into non-overlapping patches.
+        Args:
+            x: (B, 3, H, W)
+        Returns:
+            patches: (B * num_patches, 3, P, P)
+        """
+        B, C, H, W = x.shape
+        P = self.patch_size
+        assert H % P == 0 and W % P == 0, "Image dimensions must be divisible by patch size"
+        h, w = H // P, W // P
+        x = x.reshape(B, C, h, P, w, P)
+        x = x.permute(0, 2, 4, 1, 3, 5)  # (B, h, w, C, P, P)
+        patches = x.reshape(B * h * w, C, P, P)
+        return patches, (h, w)
+
+    def unpatchify(self, patches: torch.Tensor, h: int, w: int) -> torch.Tensor:
+        """
+        Reconstructs the full image from patches.
+        Args:
+            patches: (B * h * w, 3, P, P)
+        Returns:
+            image: (B, 3, H, W)
+        """
+        B_hw = patches.shape[0]
+        B = B_hw // (h * w)
+        C, P = patches.shape[1], self.patch_size
+        patches = patches.reshape(B, h, w, C, P, P)
+        patches = patches.permute(0, 3, 1, 4, 2, 5)
+        image = patches.reshape(B, C, h * P, w * P)
+        return image
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         """
-        Return the reconstructed image and a dictionary of additional loss terms you would like to
-        minimize (or even just visualize).
-        You can return an empty dictionary if you don't have any additional terms.
+        Forward pass: reconstructs the input image.
+        Returns:
+            recon: reconstructed image
+            aux: dictionary with auxiliary losses (optional)
         """
-        raise NotImplementedError()
+        patches, (h, w) = self.patchify(x)
+        z = self.encoder(patches)
+        recon_patches = self.decoder(z)
+        recon = self.unpatchify(recon_patches, h, w)
+
+        # Optional auxiliary visualization metric
+        mse_loss = F.mse_loss(recon, x)
+        return recon, {"reconstruction_loss": mse_loss}
 
     def encode(self, x: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError()
+        patches, _ = self.patchify(x)
+        return self.encoder(patches)
 
-    def decode(self, x: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError()
+    def decode(self, z: torch.Tensor, h: int, w: int) -> torch.Tensor:
+        recon_patches = self.decoder(z)
+        return self.unpatchify(recon_patches, h, w)
+
