@@ -111,36 +111,78 @@ class PatchAutoEncoder(torch.nn.Module, PatchAutoEncoderBase):
         (Optionally) Use this class to implement an encoder.
                      It can make later parts of the homework easier (reusable components).
         """
-
+        # Written with the help of ChatGPT
         def __init__(self, patch_size: int, latent_dim: int, bottleneck: int):
             super().__init__()
-            raise NotImplementedError()
+            self.patchify = PatchifyLinear(patch_size=patch_size, latent_dim=latent_dim)
+            self.conv = torch.nn.Sequential(
+                torch.nn.Conv2d(latent_dim, latent_dim, kernel_size=3, padding=1),
+                torch.nn.GELU(),
+                torch.nn.Conv2d(latent_dim, bottleneck, kernel_size=1),
+            )
 
+        # Written with the help of ChatGPT
         def forward(self, x: torch.Tensor) -> torch.Tensor:
-            raise NotImplementedError()
+            x = self.patchify(x)          
+            x = hwc_to_chw(x)             
+            x = self.conv(x)              
+            x = chw_to_hwc(x)             
+            return x
 
     class PatchDecoder(torch.nn.Module):
+        # Written with the help of ChatGPT
         def __init__(self, patch_size: int, latent_dim: int, bottleneck: int):
             super().__init__()
-            raise NotImplementedError()
+            self.patch_size = patch_size
+            self.latent_dim = latent_dim
+            self.unpatchify = UnpatchifyLinear(patch_size=patch_size, latent_dim=latent_dim)
+            self.conv = torch.nn.Sequential(
+                torch.nn.Conv2d(bottleneck, latent_dim, kernel_size=3, padding=1),
+                torch.nn.GELU(),
+            )
 
+        # Written with the help of ChatGPT
         def forward(self, x: torch.Tensor) -> torch.Tensor:
-            raise NotImplementedError()
+            x = hwc_to_chw(x)             
+            x = self.conv(x)              
+            x = chw_to_hwc(x)             
+            x = self.unpatchify(x)        
+            return x
 
-    def __init__(self, patch_size: int = 25, latent_dim: int = 128, bottleneck: int = 128):
+    # Written with the help of ChatGPT
+    def __init__(self, patch_size: int = 5, latent_dim: int = 128, bottleneck: int = 128):
         super().__init__()
-        raise NotImplementedError()
+        self.patch_size = patch_size
+        self.latent_dim = latent_dim
+        self.bottleneck = bottleneck
 
+        self.encoder = self.PatchEncoder(
+            patch_size=patch_size,
+            latent_dim=latent_dim,
+            bottleneck=bottleneck,
+        )
+        self.decoder = self.PatchDecoder(
+            patch_size=patch_size,
+            latent_dim=latent_dim,
+            bottleneck=bottleneck,
+        )
+
+    # Written with the help of ChatGPT
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         """
         Return the reconstructed image and a dictionary of additional loss terms you would like to
         minimize (or even just visualize).
         You can return an empty dictionary if you don't have any additional terms.
         """
-        raise NotImplementedError()
+        z = self.encode(x)
+        recon = self.decode(z)
+        extra_losses: dict[str, torch.Tensor] = {}
+        return recon, extra_losses
 
+    # Written with the help of ChatGPT
     def encode(self, x: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError()
+        return self.encoder(x)
 
+    # Written with the help of ChatGPT
     def decode(self, x: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError()
+        return self.decoder(x)

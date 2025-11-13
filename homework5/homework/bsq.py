@@ -44,10 +44,17 @@ class Tokenizer(abc.ABC):
 
 
 class BSQ(torch.nn.Module):
+    # Written with the help of ChatGPT
     def __init__(self, codebook_bits: int, embedding_dim: int):
         super().__init__()
-        raise NotImplementedError()
+        self._codebook_bits = codebook_bits
+        self.codebook_bits = codebook_bits
+        self.embedding_dim = embedding_dim
 
+        self.proj_down = torch.nn.Linear(embedding_dim, codebook_bits)
+        self.proj_up = torch.nn.Linear(codebook_bits, embedding_dim)
+
+    # Written with the help of ChatGPT
     def encode(self, x: torch.Tensor) -> torch.Tensor:
         """
         Implement the BSQ encoder:
@@ -55,34 +62,48 @@ class BSQ(torch.nn.Module):
         - L2 normalization
         - differentiable sign
         """
-        raise NotImplementedError()
+        z = self.proj_down(x)  # (..., codebook_bits)
 
+        # L2 normalization along last dim
+        norm = z.norm(dim=-1, keepdim=True) + 1e-8
+        z = z / norm
+
+        # Differentiable binarization to -1 / 1
+        z_bin = diff_sign(z)
+        return z_bin
+
+    # Written with the help of ChatGPT
     def decode(self, x: torch.Tensor) -> torch.Tensor:
         """
         Implement the BSQ decoder:
         - A linear up-projection into embedding_dim should suffice
         """
-        raise NotImplementedError()
+        return self.proj_up(x)
 
+    # Written with the help of ChatGPT
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.decode(self.encode(x))
 
+    # Written with the help of ChatGPT
     def encode_index(self, x: torch.Tensor) -> torch.Tensor:
         """
         Run BQS and encode the input tensor x into a set of integer tokens
         """
         return self._code_to_index(self.encode(x))
 
+    # Written with the help of ChatGPT
     def decode_index(self, x: torch.Tensor) -> torch.Tensor:
         """
         Decode a set of integer tokens into an image.
         """
         return self.decode(self._index_to_code(x))
 
+    # Written with the help of ChatGPT
     def _code_to_index(self, x: torch.Tensor) -> torch.Tensor:
         x = (x >= 0).int()
         return (x * 2 ** torch.arange(x.size(-1)).to(x.device)).sum(dim=-1)
 
+    # Written with the help of ChatGPT
     def _index_to_code(self, x: torch.Tensor) -> torch.Tensor:
         return 2 * ((x[..., None] & (2 ** torch.arange(self._codebook_bits).to(x.device))) > 0).float() - 1
 
@@ -95,22 +116,36 @@ class BSQPatchAutoEncoder(PatchAutoEncoder, Tokenizer):
           Changing the patch-size of codebook-size will complicate later parts of the assignment.
     """
 
+    # Written with the help of ChatGPT
     def __init__(self, patch_size: int = 5, latent_dim: int = 128, codebook_bits: int = 10):
-        super().__init__(patch_size=patch_size, latent_dim=latent_dim)
-        raise NotImplementedError()
+        super().__init__(patch_size=patch_size, latent_dim=latent_dim, bottleneck=latent_dim)
+        self.codebook_bits = codebook_bits
 
+        self.bsq = BSQ(codebook_bits=codebook_bits, embedding_dim=self.bottleneck)
+
+    # Written with the help of ChatGPT
     def encode_index(self, x: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError()
+        z = super().encode(x)
+        tokens = self.bsq.encode_index(z)  
+        return tokens
 
+    # Written with the help of ChatGPT
     def decode_index(self, x: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError()
+        z = self.bsq.decode_index(x)
+        img = super().decode(z)
+        return img
 
+    # Written with the help of ChatGPT
     def encode(self, x: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError()
+        z = super().encode(x)
+        z_q = self.bsq(z)
+        return z_q
 
+    # Written with the help of ChatGPT
     def decode(self, x: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError()
+        return super().decode(x)
 
+    # Written with the help of ChatGPT
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         """
         Return the reconstructed image and a dictionary of additional loss terms you would like to
@@ -127,4 +162,23 @@ class BSQPatchAutoEncoder(PatchAutoEncoder, Tokenizer):
                 ...
               }
         """
-        raise NotImplementedError()
+        z = super().encode(x)
+
+        z_code = self.bsq.encode(z)
+        z_q = self.bsq.decode(z_code)
+
+        recon = super().decode(z_q)
+
+        with torch.no_grad():
+            tokens = self.bsq._code_to_index(z_code)
+            cnt = torch.bincount(
+                tokens.flatten(),
+                minlength=2 ** self.codebook_bits
+            ).float()
+
+            extra = {
+                "cb0": (cnt == 0).float().mean(),
+                "cb2": (cnt <= 2).float().mean(),
+            }
+
+        return recon, {k: v.detach() for k, v in extra.items()}
