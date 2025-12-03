@@ -28,7 +28,16 @@ class BaseLLM:
         This would be a default implementation applies a basic chat template.
         Override this in subclasses for different behavior (e.g., SFT/RFT models should return raw questions).
         """
-        raise NotImplementedError()
+        messages = [
+            {"role": "user", "content": question}
+        ]
+
+        # apply_chat_template generates the complete conversation string
+        return self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True  # adds the assistant turn marker
+        )
 
     def parse_answer(self, answer: str) -> float:
         """
@@ -52,7 +61,31 @@ class BaseLLM:
         - decode the outputs with self.tokenizer.decode
 
         """
-        raise NotImplementedError()
+        formatted = self.format_prompt(prompt)
+
+        # 2. Tokenize
+        inputs = self.tokenizer(
+            formatted,
+            return_tensors="pt"
+        ).to(self.device)
+
+        # 3. Generate
+        with torch.no_grad():
+            output_ids = self.model.generate(
+                **inputs,
+                max_new_tokens=50,
+                do_sample=False,               # greedy decode
+                eos_token_id=self.tokenizer.eos_token_id,
+            )
+
+        # 4. Decode ONLY the generated portion
+        #    (slice off the input prompt tokens)
+        generated_ids = output_ids[0][len(inputs["input_ids"][0]):]
+
+        return self.tokenizer.decode(
+            generated_ids,
+            skip_special_tokens=True
+        )
         # return self.batched_generate([prompt])[0]   # If you feel confident, just use this line of code and move straight to batched_generate.
 
     @overload
