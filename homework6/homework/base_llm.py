@@ -1,3 +1,4 @@
+# file written with the help of chatgpt 5.1
 from typing import overload
 
 import torch
@@ -21,14 +22,10 @@ class BaseLLM:
         self.device = device
 
     def format_prompt(self, question: str) -> str:
-        messages = [
-            {"role": "system", "content": "You are a helpful assistant. Be concise."},
-            {"role": "user", "content": question},
-        ]
+        messages = [{"role": "system", "content": "You are a helpful assistant. Be concise."},
+            {"role": "user", "content": question},]
 
-        return self.tokenizer.apply_chat_template(
-            messages, add_generation_prompt=True, tokenize=False
-        )
+        return self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
 
 
 
